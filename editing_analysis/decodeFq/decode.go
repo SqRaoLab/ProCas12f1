@@ -1,15 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 )
 
 // subsetString 采用坐标从bytes中截取对应的值
 func subsetString(seq string, start, end int) string {
 	if start >= 0 && end <= len(seq) && start < end {
-		return string(seq[start:end])
+		return seq[start:end]
 	}
-	sugar.Debugf("subsetString start and end pos error: %d-%d", start, end)
+	//sugar.Debugf("subsetString start and end pos error: %d-%d", start, end)
 	return ""
 }
 
@@ -18,34 +19,32 @@ type SeqComponent struct {
 	PAM      string
 	Edit     string
 	Scaffold string
-	Behind   string
 	Before   string
 	Target   string
 	After    string
-	PrimerR  string
 	Spacer   string
 	UMI      string
-	Cigar    string
-	Sketch   string
 }
 
-func (s *SeqComponent) Header(umi bool) string {
-	headers := []string{"scaffold", "spacer", "before", "pam", "target", "after", "primer_r", "edit", "cigar", "sketch"}
+// Header used for output format
+func (s *SeqComponent) Header(umi bool) []string {
+	headers := []string{"scaffold", "spacer", "before", "pam", "target", "after", "edit"}
 	if umi {
 		headers = append(headers, "umi")
 	}
 
-	return strings.Join(headers, "\t")
+	return headers
 }
 
-// String 将元件转换为可输出的字符串
-func (s *SeqComponent) String(umi bool) string {
-	vals := []string{s.Scaffold, s.Spacer, s.Before, s.PAM, s.Target, s.After, s.PrimerR, s.Edit, s.Cigar, s.Sketch}
+// String used for output results
+func (s *SeqComponent) String(umi bool) []string {
+	vals := []string{s.Scaffold, s.Spacer, s.Before, s.PAM, s.Target, s.After, s.Edit}
+
 	if umi {
 		vals = append(vals, s.UMI)
 	}
 
-	return strings.Join(vals, "\t")
+	return vals
 }
 
 // findAllIndexes 返回子字符串在主字符串中所有出现的起始索引
@@ -53,6 +52,10 @@ func findAllIndexes(text, substr string) []int {
 	var indexes []int
 	start := 0
 	for {
+		if start >= len(text) {
+			break
+		}
+
 		index := strings.Index(text[start:], substr)
 		if index == -1 {
 			break
@@ -67,25 +70,25 @@ func findAllIndexes(text, substr string) []int {
 }
 
 // 解析测序序列
-func (designSize *DesignSize) decodeString(seq, umi string, library *PoolLibrary) *SeqComponent {
-	res := &SeqComponent{}
-	// 预计算 designSize 相关偏移
-	beforeOffset := designSize.SpacerDistance
-	pamLen := designSize.PAMLen
+func (designSize *DesignSize) decodeString(seq, umi string, library *PoolLibrary) []*SeqComponent {
 
+	data := make([]*SeqComponent, 0)
+	res := &SeqComponent{}
+
+	// 预计算 designSize 相关偏移
 	if umi != "" {
 		umiAnchors := strings.Split(umi, "|")
-		idxs := make([]int, 0)
+		indexes := make([]int, 0)
 		for _, ua := range umiAnchors {
-			idxs = append(idxs, strings.Index(seq, ua))
+			indexes = append(indexes, strings.Index(seq, ua))
 		}
 
 		start, end := 0, 0
-		if idxs[0] > 0 {
-			start = idxs[0] + len(umiAnchors[0])
+		if indexes[0] > 0 {
+			start = indexes[0] + len(umiAnchors[0])
 		}
-		if idxs[1] > 0 {
-			end = idxs[1]
+		if indexes[1] > 0 {
+			end = indexes[1]
 		}
 
 		if start > 0 && end > 0 {
@@ -97,72 +100,74 @@ func (designSize *DesignSize) decodeString(seq, umi string, library *PoolLibrary
 		}
 	}
 
-	for scaffold, spacers := range library.Spacer {
-		for _, idx := range findAllIndexes(seq, scaffold) {
-			// sugar.Debug(seq[idx:(idx+len(scaffold))] == scaffold)
-			totalLen := len(scaffold) + designSize.SpacerLen
-			if idx+totalLen > len(seq) {
-				break
-			}
+	// if scaffold do not represent in sequence then return
+	//requiredLength := designSize.SpacerDistance + designSize.BeforeLen + designSize.PAMLen + designSize.TargetLen + designSize.SpacerLen + len(library.Scaffold)
+	for _, idx := range findAllIndexes(seq, library.Scaffold) {
+		// find spacer
+		start := idx + len(library.Scaffold)
+		end := start + designSize.SpacerLen
 
-			segment := seq[idx+len(scaffold) : idx+totalLen]
+		segment := subsetString(seq, start, end)
 
-			// 检查该spacer是否为该scaffold对应的spacer
-			ok := false
-			for _, spacer := range spacers {
-				if segment == spacer {
-					ok = true
-					break
-				}
-			}
-			if !ok {
-				continue
-			}
-
-			// 检查后续是否匹配任意 spacer
-			// 匹配成功
-			matchEnd := idx + totalLen // scaffoldSpacer 结束位置
+		// if spacer exists
+		if beforeSeqs, ok := library.Spacer[segment]; ok {
+			res.Scaffold = library.Scaffold
 			res.Spacer = segment
 
-			// 提取 Before
-			beforeStart := matchEnd + beforeOffset
-			beforeEnd := beforeStart + designSize.BeforeLen
-			if beforeEnd > len(seq) {
+			// find before
+			start = end + designSize.SpacerDistance
+			end = start + designSize.BeforeLen
+			res.Before = subsetString(seq, start, end)
+
+			// get pam
+			start = end
+			end = start + designSize.PAMLen
+			res.PAM = subsetString(seq, start, end)
+
+			// Quality check
+			_, ok := beforeSeqs[res.Before]
+			if !ok {
+				sugar.Debugf("%s not found in Before map", res.Before)
 				continue
 			}
-			res.Before = subsetString(seq, beforeStart, beforeEnd)
-
-			// 提取 PAM
-			pamStart := beforeEnd
-			pamEnd := pamStart + pamLen
-			if pamEnd > len(seq) {
-				continue
-			}
-			res.PAM = subsetString(seq, pamStart, pamEnd)
-
-			// 提取 Target 和 Edit
-			targetStart := pamEnd
-			editEnd := targetStart + designSize.TargetLen
-			if editEnd > len(seq) {
+			_, ok = library.Before[res.Before][res.PAM]
+			if !ok {
+				sugar.Debugf("%s not found in PAM map of before %s", res.PAM, res.Before)
+				sugar.Debugf("%s\n%s\n%s", seq, res.Before, res.PAM)
 				continue
 			}
 
-			res.Target = library.Targets[res.Spacer]
-			res.Edit = subsetString(seq, targetStart, editEnd)
+			res.Target = library.Target[res.Spacer]
+			// get edit sequence
 
-			res.After = subsetString(seq, editEnd, editEnd+designSize.BehindLen)
-			res.PrimerR = subsetString(seq, editEnd+designSize.BehindLen, editEnd+designSize.BehindLen+designSize.PrimerLen)
+			// before get edit sequence, identify the behind sequence first
 
-			res.Scaffold = scaffold
-			_, alignedRef1, alignedQuery1 := NeedlemanWunsch(res.Target, res.Edit)
-			cigar, sketch := GenerateCIGAR(alignedRef1, alignedQuery1)
-			res.Cigar = cigar
-			res.Sketch = sketch
-			return res
+			for behind := range library.Behind[fmt.Sprintf("%s%s%s", res.Before, res.PAM, res.Spacer)] {
+				idx := strings.Index(seq[end:], behind)
+
+				if idx > 0 {
+					res.Edit = subsetString(seq, end, end+idx)
+				} else {
+					res.Edit = subsetString(seq, end, end+designSize.TargetLen)
+				}
+
+				temp := &SeqComponent{
+					PAM:      res.PAM,
+					Edit:     res.Edit,
+					Scaffold: res.Scaffold,
+					Before:   res.Before,
+					Target:   res.Target,
+					After:    behind,
+					Spacer:   res.Spacer,
+					UMI:      res.UMI,
+				}
+
+				data = append(data, temp)
+			}
 		}
 	}
 
-	return nil
+	return data
 }
 
 // ReadPair 代表一对FASTQ读段

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/k0kubun/go-ansi"
 
@@ -46,6 +47,7 @@ func progressBar(size int64) *progressbar.ProgressBar {
 			progressbar.OptionShowBytes(true),      // 显示已读/总字节数
 			progressbar.OptionShowCount(),          // 显示计数（可选）
 			progressbar.OptionFullWidth(),          // 全宽显示（可选）
+			progressbar.OptionThrottle(1*time.Second),
 		)
 	}
 	return progressbar.NewOptions(-1,
@@ -57,6 +59,7 @@ func progressBar(size int64) *progressbar.ProgressBar {
 		progressbar.OptionSpinnerType(14),      // 旋转光标
 		progressbar.OptionSetWriter(os.Stderr), // 避免 stdout 冲突
 		progressbar.OptionSetItsString("files"),
+		progressbar.OptionThrottle(1*time.Second),
 	)
 }
 
@@ -125,7 +128,6 @@ func readFastqInChannel(filename string, recordChan chan<- []string, wg *sync.Wa
 	if err != nil {
 		sugar.Fatalf("Error opening file %s: %v", filename, err)
 	}
-	defer file.Close()
 
 	var gzReader *gzip.Reader
 	var bar *progressbar.ProgressBar
@@ -150,10 +152,6 @@ func readFastqInChannel(filename string, recordChan chan<- []string, wg *sync.Wa
 		if err != nil {
 			sugar.Fatalf("Error creating gzip reader for %s: %v", filename, err)
 		}
-	}
-
-	if gzReader != nil {
-		defer gzReader.Close()
 	}
 
 	scanner := bufio.NewScanner(gzReader)
@@ -182,8 +180,13 @@ func readFastqInChannel(filename string, recordChan chan<- []string, wg *sync.Wa
 	}
 
 	if bar != nil {
-		bar.Finish()
+		_ = bar.Finish()
 	}
+
+	if gzReader != nil {
+		_ = gzReader.Close()
+	}
+	_ = file.Close()
 
 	// 处理文件末尾可能存在的不完整记录（理论上不应存在）
 	if len(buffer) > 0 {

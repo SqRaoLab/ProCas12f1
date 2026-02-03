@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,76 +11,16 @@ import (
 	"github.com/voxelbrain/goptions"
 )
 
-// LoadBarcodes 从 JSON 文件加载 barcode 规则
-func LoadBarcodes(path string) (map[string][]SampleBarcodeRule, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var raw map[string]map[string][][]string
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
-	}
-
-	rules := make(map[string][]SampleBarcodeRule)
-	for sample, dataMap := range raw {
-		for dataKey, pairs := range dataMap {
-			for _, pair := range pairs {
-				if len(pair) >= 2 {
-					if _, ok := rules[sample]; !ok {
-						rules[sample] = make([]SampleBarcodeRule, 0)
-					}
-					rules[sample] = append(rules[sample], SampleBarcodeRule{
-						Sample: sample,
-						Data:   dataKey,
-						Up:     pair[0],
-						Down:   pair[1],
-					})
-				}
-			}
-		}
-	}
-	sugar.Infof("Loaded %d barcode rules.\n", len(rules))
-	return rules, nil
-}
-
-func main() {
-	options := defaultParams()
-	goptions.ParseAndFail(options)
-	setLogger(filepath.Join(options.Output, "splitFq.log"))
-
-	if options.Version {
-		sugar.Info("Version: 0.1.0")
-		os.Exit(0)
-	}
-
-	// 可在此处硬编码路径，或读 config.json
-	barcodesFile := options.Barcode
-	outputDir := options.Output
-
-	// 创建输出目录
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		log.Fatal(err)
-	}
-
-	// 加载 barcode 规则
-	rules, err := LoadBarcodes(barcodesFile)
-	if err != nil {
-		log.Fatal("Load barcodes error: ", err)
-	}
-
-	if options.Debug {
-		sugar.Infof("%v", rules)
-	}
-
-	// 定义 FASTQ 路径模式
+func loadInputFiles(path string) (map[string]int64, map[string][]string) {
 	fqPatterns := map[string]string{}
-	content, err := os.ReadFile(options.Pool)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		sugar.Fatal(err)
 	}
-	json.Unmarshal(content, &fqPatterns)
+	err = json.Unmarshal(content, &fqPatterns)
+	if err != nil {
+		sugar.Fatal(err)
+	}
 
 	// 收集所有文件对
 	// var allPairs = make(map[string][]string)
@@ -92,7 +31,7 @@ func main() {
 		sort.Strings(matches)
 
 		if len(matches) < 1 {
-			sugar.Fatalf("%v找不到文件", pattern)
+			sugar.Fatalf("%v not found", pattern)
 		}
 
 		allPairs[group] = matches
@@ -104,13 +43,53 @@ func main() {
 			}
 		}
 	}
+	return fileSize, allPairs
+}
+
+func main() {
+	options := defaultParams()
+	goptions.ParseAndFail(options)
+	setLogger(filepath.Join(options.Output, "splitFq.log"))
+
+	if options.Version {
+		sugar.Info("Version: 0.2.0")
+		os.Exit(0)
+	}
+
+	// 创建输出目录
+	if err := os.MkdirAll(options.Output, 0755); err != nil {
+		log.Fatal(err)
+	}
+
+	// 加载 barcode 规则
+	rules, samples, err := loadBarcodes(options.Barcode)
+	if err != nil {
+		sugar.Fatal("Load barcodes error: ", err)
+	}
+
+	if options.Debug {
+		sugar.Infof("%v", rules)
+	}
+
+	// 加载 scaffold 规则
+	var scaffolds map[string]string
+	if options.Scaffold != "" {
+		sugar.Infof("Load scaffolds")
+		scaffolds, err = loadScaffold(options.Scaffold)
+		if err != nil {
+			sugar.Fatal("Load scaffolds error: ", err)
+		}
+	}
+
+	// 定义 FASTQ 路径模式
+	fileSize, allPairs := loadInputFiles(options.Pool)
 
 	// 统计总共要读取的文件大小
 	total := int64(0)
-	for _, rules := range rules {
-		// sugar.Infof("%v", rules)
-		for _, rule := range rules {
-			total += fileSize[rule.Data]
+	for key := range rules {
+		fs, ok := fileSize[key]
+		if ok {
+			total += fs
 		}
 	}
 
@@ -118,31 +97,47 @@ func main() {
 		sugar.Infof("%v", allPairs)
 	}
 
-	// 1. 在 main 函数开始处创建全局的 FileWriterCache
-	// 并发处理（使用 GOMAXPROCS）
-	sugar.Info("分割文件")
-	splitOutDir := outputDir // filepath.Join(outputDir, "split")
-	os.MkdirAll(splitOutDir, os.ModePerm)
-
+	// read processes
+	readChan := make(chan *ReadPair, 50000)
 	var workerWg sync.WaitGroup
+	var readerWg sync.WaitGroup
+	var writerWg sync.WaitGroup
+
+	if options.Merge {
+		sugar.Infof("running in merge mode")
+	}
+
+	// create writers for different files
+	writers := make(map[string]chan *ReadPair, len(samples))
+	for sample := range samples {
+		writerWg.Add(1)
+		writers[sample] = make(chan *ReadPair, 50000)
+		go writer(writers[sample], options.Output, &writerWg, options.Merge)
+	}
+
+	// create reader and processor
 	bar := progressBar(total, true)
-	for _, rules := range rules {
-		for _, rule := range rules {
-			workerWg.Add(1)
-			go ProcessFilePair(allPairs[rule.Data], splitOutDir, rule, bar, &workerWg, options.Or)
+	for key, rule := range rules {
+		fs, ok := allPairs[key]
+		if ok {
+			readerWg.Add(1)
+			go readFastqInChannel(fs, readChan, &readerWg, bar)
+
+			for i := 0; i < 6; i++ {
+				workerWg.Add(1)
+				go processFilePair(readChan, writers, rule, &workerWg, scaffolds)
+			}
 		}
 	}
 
-	workerWg.Wait()
-	bar.Finish()
+	readerWg.Wait()
+	close(readChan)
 
-	sugar.Info("融合输出文件")
-	bar = progressBar(int64(len(rules)), false)
-	for key := range rules {
-		merge(filepath.Join(splitOutDir, fmt.Sprintf("%s*_R1.fq.gz", key)), filepath.Join(outputDir, fmt.Sprintf("%s_R1.fq.gz", key)))
-		merge(filepath.Join(splitOutDir, fmt.Sprintf("%s*_R2.fq.gz", key)), filepath.Join(outputDir, fmt.Sprintf("%s_R2.fq.gz", key)))
-		bar.Add(1)
+	workerWg.Wait()
+	for _, channel := range writers {
+		close(channel)
 	}
-	bar.Finish()
-	log.Println("✅ All tasks completed.")
+
+	writerWg.Wait()
+	_ = bar.Finish()
 }

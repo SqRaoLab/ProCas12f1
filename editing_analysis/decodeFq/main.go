@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"compress/gzip"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"strings"
@@ -17,30 +17,6 @@ var (
 	designSize *DesignSize
 	poolLibMap map[string]*PoolLibrary
 )
-
-// processPairs 处理读段对
-func processPairs(pairChan <-chan *ReadPair, resultChan chan<- string, key string, umi string, reverse bool) {
-	for pair := range pairChan {
-		reads := []string{pair.R1, pair.R2}
-		if reverse {
-			reads = []string{reverseComplement(pair.R1), reverseComplement(pair.R2)}
-		}
-		// 看reverse primer在r1还是r2上
-		for _, s := range reads {
-			if res := designSize.decodeString(s, umi, poolLibMap[key]); res != nil {
-				if umi != "" && res.UMI == "" {
-					continue
-				}
-
-				outStr := res.String(umi != "")
-				if outStr != "" {
-					resultChan <- fmt.Sprintf("%s\t%s\t%s", key, pair.ID, outStr)
-				}
-
-			}
-		}
-	}
-}
 
 // reverseComplement 返回 DNA 序列的反向互补链
 func reverseComplement(seq string) string {
@@ -73,6 +49,21 @@ func reverseComplement(seq string) string {
 	return builder.String()
 }
 
+// processPairs 处理读段对
+func processPairs(pairChan <-chan *ReadPair, resultChan chan<- []string, key string, umi string) {
+	for pair := range pairChan {
+		for _, res := range designSize.decodeString(pair.R1+reverseComplement(pair.R2), umi, poolLibMap[key]) {
+			if umi != "" && res.UMI == "" {
+				continue
+			}
+			row := []string{key, pair.ID}
+			row = append(row, res.String(umi != "")...)
+			resultChan <- row
+			break
+		}
+	}
+}
+
 // --- 主函数 ---
 
 func main() {
@@ -81,18 +72,14 @@ func main() {
 	setLogger(options.Debug)
 
 	if options.Version {
-		fmt.Println("Version: 0.1.1")
+		fmt.Println("Version: 0.2.2")
 		os.Exit(0)
 	}
 
 	if options.R1 == "" || options.R2 == "" || options.Cas == "" {
-		sugar.Errorf("-1, -2, -c参数都需要")
+		sugar.Errorf("-1, -2, -c all reqquired")
 		goptions.PrintHelp()
 		os.Exit(0)
-	}
-
-	if options.Reverse {
-		sugar.Info("启用Reverse模式")
 	}
 
 	designSize = &DesignSize{
@@ -112,11 +99,17 @@ func main() {
 		sugar.Debugf("Library: %v loaded", key)
 	}
 
+	if _, ok := poolLibMap[options.Cas]; !ok {
+		sugar.Fatalf("%s not found in library, please chech the input cas protein name", options.Cas)
+	}
+
+	//sugar.Infof("%v", poolLibMap[options.Cas])
+
 	// 创建channel
 	r1Chan := make(chan []string, 100) // 缓冲channel
 	r2Chan := make(chan []string, 100)
-	pairChan := make(chan *ReadPair, 1000)         // 更大的缓冲区以平衡生产者和消费者
-	resultChan := make(chan string, options.Procs) // 缓冲区大小等于worker数
+	pairChan := make(chan *ReadPair, 1000)           // 更大的缓冲区以平衡生产者和消费者
+	resultChan := make(chan []string, options.Procs) // 缓冲区大小等于worker数
 
 	var wg sync.WaitGroup
 
@@ -134,6 +127,9 @@ func main() {
 	go func() {
 		defer close(pairChan)
 
+		r1Cache := make(map[string]string)
+		r2Cache := make(map[string]string)
+
 		for {
 			r1Record, ok1 := <-r1Chan
 			r2Record, ok2 := <-r2Chan
@@ -146,12 +142,36 @@ func main() {
 			// 这里假设顺序严格对应，且ID行格式为 @...
 			if len(r1Record) > 0 && len(r2Record) > 0 {
 				id1 := strings.SplitN(r1Record[0], " ", 2)[0] // 取第一个空格前的部分
+				id2 := strings.SplitN(r2Record[0], " ", 2)[0]
 
-				pairChan <- &ReadPair{
-					ID: id1,
-					R1: r1Record[1], // 序列行
-					R2: r2Record[1], // 序列行
+				if strings.HasSuffix(id1, "/1") || strings.HasSuffix(id1, "/2") {
+					id1 = strings.Split(id1, "/")[0]
+					id2 = strings.Split(id2, "/")[0]
 				}
+
+				pair := &ReadPair{}
+
+				if id1 == id2 {
+					pair.ID = id1
+					pair.R1 = r1Record[1]
+					pair.R2 = r2Record[1]
+				} else if _, ok := r1Cache[id2]; ok {
+					pair.ID = id2
+					pair.R1 = r1Cache[id2]
+					pair.R2 = r2Record[1]
+					delete(r1Cache, id2)
+				} else if _, ok := r2Cache[id1]; ok {
+					pair.ID = id1
+					pair.R1 = r1Record[1]
+					pair.R2 = r2Cache[id1]
+					delete(r2Cache, id1)
+				} else {
+					r1Cache[id1] = r1Record[1]
+					r2Cache[id2] = r2Record[1]
+					continue
+				}
+				//sugar.Debugf("Pair: %v", pair)
+				pairChan <- pair
 			}
 		}
 	}()
@@ -162,8 +182,7 @@ func main() {
 		workerWg.Add(1)
 		go func(id int) {
 			defer workerWg.Done()
-			sugar.Debugf("processing cas %v", options.Cas)
-			processPairs(pairChan, resultChan, options.Cas, options.UMIAnchor, options.Reverse)
+			processPairs(pairChan, resultChan, options.Cas, options.UMIAnchor)
 		}(i)
 	}
 
@@ -183,46 +202,48 @@ func main() {
 	if err != nil {
 		sugar.Fatalf("Error creating output file %s: %v", options.Output, err)
 	}
-	defer outFile.Close()
 
-	var writer *bufio.Writer
+	var writer *csv.Writer
+	var gzFile *gzip.Writer
 	if strings.HasSuffix(options.Output, ".gz") {
-		gzFile := gzip.NewWriter(outFile)
-		defer gzFile.Close()
+		gzFile = gzip.NewWriter(outFile)
 
-		writer = bufio.NewWriter(gzFile)
+		// 创建 TSV 写入器（使用 tab 作为分隔符）
+		writer = csv.NewWriter(gzFile)
 	} else {
-		writer = bufio.NewWriter(outFile)
+		// 创建 TSV 写入器（使用 tab 作为分隔符）
+		writer = csv.NewWriter(outFile)
 	}
-
-	defer writer.Flush()
 
 	// 写入表头 pam, spacer, behind, before
 	temp := &SeqComponent{}
-	writer.WriteString(fmt.Sprintf("CasProtein\tReads\t%s\n", temp.Header(options.UMIAnchor != "")))
-	writer.Flush() // 初始刷新
+	header := []string{"CasProtein", "ReadID"}
+	header = append(header, temp.Header(options.UMIAnchor != "")...)
+	if err := writer.Write(header); err != nil {
+		sugar.Fatalf("Error writing header: %v", err)
+	}
 
+	// do not flush manually, to prevent EOF error
 	count := 0
-	const flushInterval = 1000 // 每1000行刷新一次
-
 	for res := range resultChan {
-		_, err := writer.WriteString(fmt.Sprintln(res))
-		if err != nil {
-			sugar.Infof("Error writing to output file: %v", err)
-			// 可以选择继续或退出
-		}
+		_ = writer.Write(res)
+
 		count++
-		if count%flushInterval == 0 {
-			err := writer.Flush()
-			if err != nil {
-				sugar.Infof("Error flushing output file: %v", err)
-			}
+		if count%10000 == 0 {
+			writer.Flush()
 		}
 	}
-	// 循环结束后，确保所有缓冲数据都被写入
-	err = writer.Flush()
+
 	if err != nil {
 		sugar.Infof("Error final flush to output file: %v", err)
 	}
+
+	// close file to prevent EOF error
+	writer.Flush()
+	if gzFile != nil {
+		_ = gzFile.Close()
+	}
+	_ = outFile.Close()
+
 	sugar.Infof("Results written to %s", options.Output)
 }
