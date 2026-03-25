@@ -52,7 +52,7 @@ func main() {
 	setLogger(filepath.Join(options.Output, "splitFq.log"))
 
 	if options.Version {
-		sugar.Info("Version: 0.2.0")
+		sugar.Info("Version: 0.2.6")
 		os.Exit(0)
 	}
 
@@ -69,16 +69,6 @@ func main() {
 
 	if options.Debug {
 		sugar.Infof("%v", rules)
-	}
-
-	// 加载 scaffold 规则
-	var scaffolds map[string]string
-	if options.Scaffold != "" {
-		sugar.Infof("Load scaffolds")
-		scaffolds, err = loadScaffold(options.Scaffold)
-		if err != nil {
-			sugar.Fatal("Load scaffolds error: ", err)
-		}
 	}
 
 	// 定义 FASTQ 路径模式
@@ -125,7 +115,7 @@ func main() {
 
 			for i := 0; i < 6; i++ {
 				workerWg.Add(1)
-				go processFilePair(readChan, writers, rule, &workerWg, scaffolds)
+				go processFilePair(readChan, writers, rule, &workerWg, options.MinMeanQual, options.MinQ30Percent, options.Trim)
 			}
 		}
 	}

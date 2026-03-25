@@ -49,7 +49,7 @@ app.logger.addHandler(InterceptHandler())
 stop_event = threading.Event()
 
 procas12f = Blueprint(
-    "procas12f",
+    "procas12f1",
     __name__,
     static_folder=os.path.join(__dir__, "./frontend/dist"),
     static_url_path="/",
@@ -152,7 +152,7 @@ api.register_blueprint(api_result, url_prefix="/result")
 api.register_blueprint(api_const, url_prefix="/const")
 api.register_blueprint(api_data, url_prefix="/upload")
 procas12f.register_blueprint(api, url_prefix="/api")
-app.register_blueprint(procas12f, url_prefix="/procas12f")
+app.register_blueprint(procas12f, url_prefix="/procas12f1")
 
 
 def run_app(args):

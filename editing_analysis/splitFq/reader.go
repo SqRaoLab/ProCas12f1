@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -14,23 +13,6 @@ import (
 
 	"github.com/schollz/progressbar/v3"
 )
-
-// Read 表示 FASTQ reads
-type Read struct {
-	ID, Seq, Qual string
-}
-
-func (r *Read) Id() string {
-	id_ := strings.Split(r.ID, " ")[0]
-	if strings.Contains(id_, "/1") || strings.Contains(id_, "/2") {
-		id_ = strings.Split(id_, "/")[0]
-	}
-	return id_
-}
-
-func (r *Read) String() string {
-	return fmt.Sprintf("%s\n%s\n+\n%s\n", r.ID, r.Seq, r.Qual)
-}
 
 // --- 文件读取和并发处理 ---
 // progressReader 是一个包装器，用于在读取时更新进度条
@@ -129,6 +111,7 @@ func readFastq(filename string, recordChan chan<- Read, wg *sync.WaitGroup, bar 
 				Seq:  strings.TrimSpace(recordCopy[1]),
 				Qual: strings.TrimSpace(recordCopy[3]),
 			}
+
 			buffer = buffer[:0] // 重置缓冲区
 		}
 	}
@@ -216,6 +199,10 @@ func readFastqInChannel(filename []string, recordChan chan<- *ReadPair, workWg *
 			} else {
 				sugar.Debugf("%s", s1.Id())
 				reads1[s1.Id()] = s1
+			}
+
+			if len(reads1) > 100 || len(reads2) > 100 {
+				sugar.Fatalf("too much mismatch reads name in %s and %s", r1Path, r2Path)
 			}
 		}
 	}

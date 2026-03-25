@@ -1,61 +1,24 @@
-# ProCas12f
+# ProCas12f1
 
-This repo contains the analysis code and prediction model for ProCas12f
+This repository contains the analysis code and prediction model for ProCas12f1.
 
-## 1. Prediciton code
-
-The prediciton code was kept under `predicition` folder, it's a Python script for predicting ProCas12f. It takes a CSV file containing sequence information as input, performs prediction using a specified Cas12 (options include CasMINI, OsCas12f1, RhCas12f1, enAsCas12f1, SpaCas12f1), and outputs the prediction results to a CSV file.
-
-### 1.1 Installation
-
-```shell
-# Python 3.10-3.12
-pip install pandas numpy viennarna biopython onnxruntime
-git clone git@github.com:ShuquanRaolab/ProCas12f.git
-cd ProCas12f/prediction
-wget https://github.com/ShuquanRaolab/ProCas12f/releases/download/models_v1/models.tar.gz
-tar -xvf models.tar.gz
-```
-
-### 1.1 Argument Details
-
-`-i` or `--input_filename`: The name of the input file. It MUST be a two-column CSV file. This is a required argument.
-
-`-n` or `--Cas12f_name`: The name of the Cas12 to use for prediction. It must be one of 'CasMINI', 'OsCas12f1', 'RhCas12f1', 'enAsCas12f1', 'SpaCas12f1'. This is a required argument.
-
-`-o` or `--output_filename`: The name of the output file. The default is './output.csv'.
-
-### 1.2 Usage Example
-
-The input file should be a CSV file with two columns: ID and SEQ. SEQ should be a 24bp sequence, including a 4bp pam and a 20bp target. For example:
-
-```csv
-ID,SEQ(6bp before + 4bp pam + 20bp target + 6bp after)
-seq1,AGCGCTATTACAGCTCGCAGATCTGCACCCGGGAAA
-seq2,GCTGATTTTATCTCCACGTGCCCTGAAGGTTAACCT
-```
-
-The command to run the script is as follows:
-
-```python
-python prediction.py -i example_input.csv -n OsCas12f1 -o example_output.csv
-```
+The `editing_analysis`, `deep_learning`, and `eCROP` folders store the code for sequencing read splitting, editing efficiency calculation, model training and prediction, and eCROP data analysis, respectively.
 
 ---
 
-## 2. Editing analysis
+## 1. Editing Analysis
 
-A comprehensive pipeline for analyzing CRISPR-Cas gene editing experiments from high-throughput sequencing data. This toolkit processes raw sequencing reads, identifies editing events, quantifies editing efficiencies.
+A comprehensive pipeline for analyzing CRISPR-Cas gene editing experiments from high-throughput sequencing data. This toolkit processes raw sequencing reads, identifies editing events, and quantifies editing efficiencies. For detailed usage, refer to the [splitFq README](./editing_analysis/splitFq/README.md) and [decodeFq README](./editing_analysis/decodeFq/README.md).
 
-### 2.1 Installation
+### 1.1 Installation
 
-[Go version>=1.20](https://go.dev/) was required to compile these tools, please install golang by official instruction.
+[Go version >= 1.20](https://go.dev/) is required to compile these tools. Please install Golang following the official instructions.
 
-### 2.2 Argument Details
+### 1.2 Argument Details
 
 #### (1) splitFq
 
-The `editing_analysis/splitFq` contains the tool used to split raw sequencing data by barcodes.
+The `editing_analysis/splitFq` directory contains the tool used to split raw sequencing data by barcodes.
 
 ```bash
 cd editing_analysis/splitFq
@@ -68,11 +31,9 @@ go build .
 
 # print help info
 ./splitFq --help
-```
+Required parameters:
 
-The parameters required
-
-```bash
+bash
 Usage: splitFq [global options] 
 
 Global options:
@@ -87,7 +48,7 @@ Global options:
 
 #### (2) decodeFq
 
-The `editing_analysis/decodeFq` contains the tool used to decode the PAM, spacer, target and editting evens from fastq files.
+The editing_analysis/decodeFq directory contains the tool used to decode PAM, spacer, target, and editing events from FASTQ files.
 
 ```bash
 cd editing_analysis/decodeFq
@@ -100,11 +61,9 @@ go build .
 
 # print help info
 ./decodeFq --help
-```
+Required parameters:
 
-The parameters required
-
-```bash
+bash
 Usage: decodeFq [global options] 
 
 Global options:
@@ -130,87 +89,126 @@ Global options:
         -h, --help            Show this help
 ```
 
-#### (3) calFreq
-
-The `editing_analysis/calFreq` contains the tool used to calculate the indel frequency.
+### 1.3 Example Pipeline
 
 ```bash
-cd editing_analysis/calFreq
-
-# install requirements
-go mod tidy
-
-# compile this tool
-go build .
-
-# print help info
-./calFreq --help
-```
-
-The parameters required
-
-```bash
-Usage: calFreq [global options] 
-
-Global options:
-        -i, --input      the output file of decodeFq (*)
-        -b, --background the background file, output file of decodeFq (*)
-        -o, --output     the output file path (default: output.txt) (*)
-        -f, --bg-freq    exclude the records with background indel freq > this value（%） (default: 8)
-        -c, --bg-count   include the background reads with count > this value
-        -r, --read-count include the editted reads with count > this value (default: 10)
-        -m, --match      the perfect match cigar (default: 20M)
-            --debug      enable debug log
-        -v, --version    print version
-        -h, --help       Show this help
-```
-
-
-## Example pipeline
-
-```bash
+# split raw data by barcodes
 ./editing_analysis/splitFq/splitFq -b example/barcodes.json -i example/files.json -o example
 
+# decode editing events from genome and plasmid samples
 ./editing_analysis/decodeFq/decodeFq -1 example/OsCas12f1-genome_R1.fq.gz -2 example/OsCas12f1-genome_R2.fq.gz -c OsCas12f1 -l example/library.json -o example/genome.tsv.gz
 ./editing_analysis/decodeFq/decodeFq -1 example/OsCas12f1-plasmid_R1.fq.gz -2 example/OsCas12f1-plasmid_R2.fq.gz -c OsCas12f1 -l example/library.json -o example/plasmid.tsv.gz
 
+# calculate editing frequency
 ./editing_analysis/calFreq/calFreq -i example/genome.tsv.gz -b example/plasmid.tsv.gz -o example/indel_freq.tsv.gz
+```
+
+---
+
+## 2. Deep Learning
+
+This folder contains the code for training and predicting with the ProCas12f1 model. The code is written in Python and uses uv for dependency management.
+
+### 2.1 Installation
+
+Before setting up the environment, please install uv following the official documentation.
+
+```bash
+# Python 3.10-3.12
+git clone git@github.com:SqRaoLab/ProCas12f1.git
+cd ProCas12f1/deep_learning
+
+# prepare the running environment
+uv sync
+
+uv run main.py --help
+
+Usage: main.py [OPTIONS] COMMAND [ARGS]...
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  design   design sgRNA by gene or fasta file
+  ml       test prediction effect on multiple machine learning models
+  predict  predict the editing frequency
+  setup    prepare the database for web interface
+  shap     calculate SHAP values to score the importance of each feature.
+  start    start web interface
+  train    train deep learning model
+```
+
+### 2.2 Toolkit Components
+
+This toolkit includes:
+
+- setup: Prepare files required for the design module and web interface
+
+- train: Model training code
+
+- predict: Model prediction code
+
+- ml: Machine learning model code described in the manuscript
+
+- shap: SHAP analysis and visualization code
+
+- design: De novo sgRNA design
+
+- start: Launch the web interface for sgRNA design
+
+### 2.3 Usage Example
+
+For more detailed usage, use uv run main.py setup --help:
+
+```bash
+uv run main.py setup --help
+Usage: main.py setup [OPTIONS]
+
+  prepare the database for web interface
+
+Options:
+  -c, --config PATH
+  -i, --input-json PATH
+  -h, --help             Show this message and exit.
 ```
 
 ---
 
 ## 3. eCROP
 
-The `eCROP` folder contains the contains the code to analyze the eCROP-seq data from the manuscript
+The eCROP folder contains the code for analyzing eCROP-seq data from the manuscript.
 
 ### 3.1 Installation
 
-Exept the pyhton environment, the `R 4.3+` and several libraries were also required.
+In addition to the Python environment, R 4.5+ and the following R libraries are required:
 
-- corrplot
-- data.table
-- dplyr
-- forcasts
-- ggplto2
-- ggsci
-- GGally
-- gridExtra
-- Matrix
-- pheatmap
-- purrr
-- qs
-- readr
-- scales
-- Seurat
-- SingleR
-- tibble
-- tidyr
-- tidyverse
+Package|Package|Package
+---|---|---
+corrplot|data.table|dplyr
+forcasts|ggplot2|ggsci
+GGally|gridExtra|Matrix
+pheatmap|purrr|qs
+readr|scales|Seurat
+SingleR|tibble|tidyr
+tidyverse|harmony| 
 
-### 3.2. Usage Example
+### 3.2 Usage Examples
 
-- `crop_count.py`: Code for counting sgRNAs from eCROP-seq experiments. Use `python crop_count.py -h` to view help.
+Script|Description
+---|---
+crop_count.py|Count sgRNAs from eCROP-seq experiments. Use python crop_count.py -h for help.
+sgrna_assign.R|Integrate gRNA assignments from read and transcriptome data, filter low-quality cells based on QC metrics, and append final assignments to the gene-count matrix.
+eCROP_UMAPs.R|Load aggregated scRNA-seq data into R using Seurat, integrate sgRNA assignments into the object metadata, and perform data processing to generate Figure 6 of the manuscript.
+eCROP_Seurat.R|Additional Seurat-based analysis for eCROP data.
+eCROP_ClusterEnrichments.R|Cluster enrichment analysis for eCROP data.
+cite_seq.Rmd|Rmarkdown file for CITE-seq data analysis.
 
-- `sgrna_assign.R`: Integrates gRNA assignments from read and transcriptome data, filters low-quality cells based on QC, and appends final assignments to the gene-count matrix.
+## License
 
-- `eCROP_UMAPs.R`, `eCROP_Seurat.R`, `eCROP_ClusterEnrichments.R`: Loaded the aggregated scRNA-seq data into R with Seurat, integrated the final sgRNA assignments into the object metadata, and performed data processing to generate manuscript **Figure 6**.
+Please refer to the repository for licensing information.
+
+## Citation
+
+If you use this code in your research, please cite the corresponding manuscript.
+
+For questions or issues, please open an issue on GitHub.

@@ -4,51 +4,15 @@ Used to demultiplex each read pair into distinct components according to the des
 
 The input FASTQ files must be processed with splitFq to ensure that reads are correctly assigned to their respective files.
 
-### Our vector structure
 
-#### plasmid
-
-```
-@A00583 
-CCCGATTCTCAAGATCTAGTTACGCCAAGCTTTCGAGACAAGAACGATTCCCAAGACCACAATCCAGGCCGGAAGAGGCAAGCATGTAAAAAAAACAATCCAGGCCGGAAGAGGGTTGGGAGACGCGGTGTTTAGTCCTTTCCACAAGAA
--------- 
-
-@A00583
-CGACCATTCTTGTGGAAAGGACGAAACACCGCGTCTCCCAACCCTCTTCCGGCCTGGATTGTTTTTTTTCCATGCTTGCCTCTTCCGGCCTGGATTGTGGTCTTGGGAATCGTTCTTGTCTCGAAAGCTTGGCGTAACTAGATCTTGAGA
---------                                  ####################      %%%%%%$$$$&&&&&&&&&&&&&&&&&&&&^^^^^^********************
-```
-
-#### genome
-
-```
-@A00583/1
-TGTTCCTATCAAGATCTAGTTACGCCAAGCTTTCGAGACAAGAACGATTCCCGAACCCGGTAGGGGAGGTAGCCAGGGTAACGGATTTAAAAAAGGTAGGGGAGGTAGCCAGGGGTTGGGAGACGCGGTGTTTCGTCCTTTCCACAAGGA
---------
-
-@A00583/2
-TTTAGCTCCTTGTGGAAAGGACGAAACACCGCGTCTCCCAACCCCTGGCTACCTCCCCTACCTTTTTTAAATCCGTTACCCTGGCTACCTCCCCTACCGGGTTCGGGAATCGTTCTTGTCTCGAAAGCTTGGCGTAACTAGATCTTGATA    
---------                                  ####################      %%%%%%$$$$&&&&&&&&&&&&&&&&&&&&^^^^^^********************
-```
-> Legend
-> - \- -> barcode
-> - \* -> reverse primer
-> - ^ -> behind target
-> - & -> gDNA target
-> - $ -> PAM
-> - % -> before target
-> - \# -> spacer
-
----
-
-### Installation
+## Installation
 
 ```bash
 # Go 1.24+ required
 go build .
 ```
 
-
-### Run
+## Run
 
 The running parameters listed:
 
@@ -78,22 +42,3 @@ Global options:
         -v, --version         Print version
         -h, --help            Show this help
 ```
-
-### The library file
-```
-guide	primer_F	U6+BsmBI	scaffold end	spacer	end	before target	pam	spacer	behind target	primer_R
-SpaCas12f1_sg1_NATA	AAGAATTACTGACCCCTCGG	GAAAGGACGAAACACCGCGTCTCC	AAAC	TACTTTGTCCTCCGGTTCTG	TTTTTT	CTGCCG	NATA	TACTTTGTCCTCCGGTTCTG	AACCAC	CGCGGAAAATGGAAAACACT
-SpaCas12f1_sg1_NATC	AAGAATTACTGACCCCTCGG	GAAAGGACGAAACACCGCGTCTCC	AAAC	TACTTTGTCCTCCGGTTCTG	TTTTTT	CTGCCG	NATC	TACTTTGTCCTCCGGTTCTG	AACCAC	CGCGGAAAATGGAAAACACT
-SpaCas12f1_sg1_NATG	AAGAATTACTGACCCCTCGG	GAAAGGACGAAACACCGCGTCTCC	AAAC	TACTTTGTCCTCCGGTTCTG	TTTTTT	CTGCCG	NATG	TACTTTGTCCTCCGGTTCTG	AACCAC	CGCGGAAAATGGAAAACACT
-```
-
-### Possible issues
-
-###### 1.No matching results found.
-
-This program requires the read names from R1 and R2 FASTQ files to match exactly.
-
-To extract the base read name, we apply the following two simple rules:
-
-- If the read name contains a space, only the part before the first space is used.
-- If the read name ends with /1 or /2, this suffix is removed. there is not any results

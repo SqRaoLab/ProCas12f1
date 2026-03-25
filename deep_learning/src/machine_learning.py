@@ -490,7 +490,7 @@ def shap(
         with open(cache, "wb+") as w:
             pickle.dump({"data": data, "df": df}, w)
 
-    _, _, x_test, _ = split_data(data, test_size=test_size, random_state=seed)
+    x_test = data["inputs"]
 
     if rename is not None:
         logger.info("load rename tick labels")

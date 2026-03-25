@@ -112,6 +112,10 @@ func writer(outChan chan *ReadPair, output string, workerWg *sync.WaitGroup, mer
 				sugar.Fatal(err)
 			}
 
+			if strings.Contains(r1.ID, "E250040455L1C010R03400035384") {
+				sugar.Infof(out.Sample)
+			}
+
 			_, _ = w1.Write([]byte(fmt.Sprintf(
 				"%s\n%s%s\n+\n%s%s\n",
 				r1.ID,

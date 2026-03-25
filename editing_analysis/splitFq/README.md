@@ -4,9 +4,10 @@ This tool splits mixed FASTQ files into separate files based on barcodes,
 assigning reads with the **upstream (forward) barcode** to **R1.fq.gz** and 
 those with the **downstream (reverse) barcode** to **R2.fq.gz**.
 
-### barcode
+## barcode
 
-The barcode json, the key is output file prefix, inner key used to match input files, then list of both end barcodes 
+The barcode json, the key is output file prefix, inner key used to match input files, then list of both end barcodes
+
 ```json
 {
   "OsCas12f1-plasmid":  {"0202-cas12f": [["ACGCTTAC", "GGGAAAGA"]]},
