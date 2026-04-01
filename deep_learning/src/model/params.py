@@ -15,8 +15,28 @@ from typing import Dict, List, Optional, Union
 import pysam
 import regex as re
 from flask import current_app
+from loguru import logger
 
 from src.db import Genome, Reference
+
+
+def reverse_complement(seq):
+    """基本的反向互补函数"""
+    comp_dict = {
+        'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G',
+        'a': 't', 't': 'a', 'g': 'c', 'c': 'g',
+        'N': 'N', 'n': 'n',
+        'R': 'Y', 'Y': 'R',  # 简并碱基
+        'S': 'S', 'W': 'W', 'K': 'M', 'M': 'K',
+        'B': 'V', 'D': 'H', 'H': 'D', 'V': 'B',
+    }
+
+    # 创建互补序列
+    complement = ''.join(comp_dict.get(base, 'N') for base in seq)
+    # 反转
+    reverse_comp = complement[::-1]
+
+    return reverse_comp
 
 
 class SequenceExtractor(object):
@@ -27,6 +47,7 @@ class SequenceExtractor(object):
         chromosome: str = None,
         start: int = 0,
         end: int = 0,
+        strand: str = "+",
         fasta: str = None,
         data_path: str = None,
     ):
@@ -36,6 +57,7 @@ class SequenceExtractor(object):
         self.chromosome = chromosome
         self.start = start
         self.end = end
+        self.strand = strand
 
         self.fasta = None
         if fasta is not None and os.path.exists(fasta):
@@ -90,12 +112,14 @@ class SequenceExtractor(object):
                 self.chromosome = rec.chromosome
                 self.start = rec.start
                 self.end = rec.end
+                self.strand = rec.strand
             break
 
     def sequence(self):
         """获取sequence"""
 
         if self.gene is not None:
+            logger.info("Running in gene mode")
             res = []
             # 如果只给了基因的坐标，则查询其名下的所有转录本和外显子
             # 遍历归属于某个基因的所有差异表达分子
@@ -118,15 +142,20 @@ class SequenceExtractor(object):
                         & (Reference.parent == transcript.gene_id)
                     )
                 ):
-                    res.append((exon.chromosome, exon.start, exon.end, exon.gene_id))
+                    res.append((exon.chromosome, exon.start, exon.end, exon.gene_id, exon.strand))
 
             res = sorted(set(res), key=lambda x: [x[0], x[1], x[2]])
 
             with pysam.FastaFile(self.reference) as fh:
                 for exon in res:
-                    yield fh.fetch(*exon[:3]), exon
-
+                    if exon[4] == "+":
+                        yield fh.fetch(*exon[:3]), exon
+                    elif exon[4] == "-":
+                        yield reverse_complement(fh.fetch(*exon[:3])), exon
+                    else:
+                        logger.warning(f"invalid strand: {exon[-1]}")
         elif self.chromosome is not None and self.start > 0 and self.end > 0:
+            logger.info("Running in genomic region mode")
             with pysam.FastaFile(self.reference) as fh:
                 try:
                     yield fh.fetch(self.chromosome, self.start, self.end), None
@@ -135,10 +164,13 @@ class SequenceExtractor(object):
                         chrom = self.chromosome.replace("chr", "")
                     else:
                         chrom = "chr" + self.chromosome
-
-                    yield fh.fetch(chrom, self.start, self.end), None
+                    if self.strand == "-":
+                        yield reverse_complement(fh.fetch(chrom, self.start, self.end)), None
+                    else:
+                        yield fh.fetch(chrom, self.start, self.end), None
 
         elif self.fasta is not None:
+            logger.info("Running in fasta mode")
             # read sequence from fasta
             with pysam.FastaFile(self.fasta) as fh:
                 for name in fh.references:
@@ -217,26 +249,28 @@ class JobParam(object):
         data_path: str = None,
         off_target: bool = False,
     ):
-        chromosome, start, end = None, None, None
+        chromosome, start, end, strand = None, None, None, None
         if genome_range is not None:
             # check the input genomic range
-            match = re.match(r"(?<chrom>\w+):(?<start>\d+)-(?<end>\d+)", genome_range)
+            match = re.match(r"(?P<chrom>\w+):(?P<start>\d+)-(?P<end>\d+):?(?P<strand>[+-])?", genome_range)
 
             if not match:
                 raise ValueError(f"{genome_range} is not a valid genome range")
             params = match.groupdict()
-            chromosome, start, end = (
+            chromosome, start, end, strand = (
                 params["chrom"],
                 int(params["start"]),
                 int(params["end"]),
+                params.get("strand", "+")
             )
+
         elif fasta is not None:
             assert os.path.exists(fasta), "fasta file does not exist"
         elif gene is None:
             raise ValueError("please provide either gene, genomic range or fasta file")
 
         self.jobs = SequenceExtractor(
-            gene, genome, chromosome, start, end, fasta=fasta, data_path=data_path
+            gene, genome, chromosome, start, end, strand=strand, fasta=fasta, data_path=data_path
         )
         self.pam = pam
         self.editing_pattern = editing_pattern

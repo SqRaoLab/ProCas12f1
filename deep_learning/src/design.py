@@ -245,30 +245,30 @@ def run_off_target(
         res = pd.read_csv(temp_file_path + ".off", sep="\t", header=None)
         temp = create_counts_table(res)
 
-        # if online is not None:
-        #     logger.info(f"insert cas-offinder results of task: {online}")
-        #     # 如果是在线任务，则将对应的结果塞进数据库中
-        #     res.columns = ["id", "chromosome", "position", "strand", "number"]
-        #
-        #     spacer, pam = [], []
-        #     for x in tqdm(res["id"], total=res.shape[0]):
-        #         temp = seq_records[x]
-        #         spacer.append(temp[0])
-        #         pam.append(temp[-1])
-        #
-        #     res["spacer"] = spacer
-        #     res["pam"] = pam
-        #
-        #     logger.info(f"formatting data: {res.shape}")
-        #     data = []
-        #     for row in tqdm(res.to_dict("records")):
-        #         row.pop("id")
-        #         row["task"] = online
-        #         data.append(row)
-        #
-        #     with ext_db.atomic():
-        #         for i in tqdm(range(0, len(data), 100)):
-        #             OffTarget.insert_many(data[i : (i + 100)]).execute()
+        if online is not None:
+            logger.info(f"insert cas-offinder results of task: {online}")
+            # 如果是在线任务，则将对应的结果塞进数据库中
+            res.columns = ["id", "chromosome", "position", "strand", "number"]
+
+            spacer, pam = [], []
+            for x in tqdm(res["id"], total=res.shape[0]):
+                temp = seq_records[x]
+                spacer.append(temp[0])
+                pam.append(temp[-1])
+
+            res["spacer"] = spacer
+            res["pam"] = pam
+
+            logger.info(f"formatting data: {res.shape}")
+            data = []
+            for row in tqdm(res.to_dict("records")):
+                row.pop("id")
+                row["task"] = online
+                data.append(row)
+
+            with ext_db.atomic():
+                for i in tqdm(range(0, len(data), 100)):
+                    OffTarget.insert_many(data[i : (i + 100)]).execute()
 
         logger.info("merging results")
         temp = temp.reset_index().rename(columns={0: "id"})
@@ -398,7 +398,7 @@ def run_design(
     "-v", "--genome", type=str, help="the genome version, required if gene is provided"
 )
 @click.option(
-    "-r", "--genome-range", type=str, help="the genomic range, eg: chr1:100-200"
+    "-r", "--genome-range", type=str, help="the genomic range, eg: chr1:100-200 or chr1:100-200:+"
 )
 @click.option("-f", "--fasta", type=click.Path(exists=True), help="path to fasta file")
 @click.option("-o", "--output", type=click.Path(), help="path to output file")
@@ -448,7 +448,8 @@ def design(
     config = Config(config)
 
     init_db(config["database"]["uri"])
-    assert genome is not None, "genome required if gene is provided"
+    if gene or genome_range:
+        assert genome is not None, "genome required if gene or genomic range is provided"
 
     if pam is None:
         pam = PAM_MAP.get(model, "NTTM")
